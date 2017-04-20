@@ -102,22 +102,26 @@ private:
 	int timeout = 1;
 public:
 	std::vector<int> group; //only if needed!
+	/**
+	 * Expecting 1000 nodes in the end.
+	 */
+	bool isRecieved[20][1000];
+	string RecievedString[20][1000];
 	invitation(int nodeId);
-	~invitation();
 	//0
-	void AreYouCoord();
+	void AreYouCoord(int nodeId);
 	//1
 	void AreYouCoordReply(int incomingId);
 	//2
 	void AreYouThereQues();
 	//3
-	void AreYouThereAns();
+	void AreYouThereAns(int nodeId);
 	//4
-	void SendInviteMessage();
+	void SendInviteMessage(int nodeId);
 	//5
-	void AreYouReady();
+	void IwantToJoin(int nodeId);
 	//6
-	void ReadyReply();
+	void IwantToJoinReply(int nodeId);
 	//7
 	void AskCoordinatorToAcceptSender();
 	//8
@@ -125,10 +129,12 @@ public:
 	//9
 	void Recovery();
 	//10
+	void merge();
+	//11
 	string createMessage(string s,string op){
 		return op+"|"+s+"|"+to_string(nodeId);
 	}
-	//11
+	//12
 	void sendMessage(string s,int incomingId){
 		int sockfd = socket(AF_INET , SOCK_STREAM , 0);
 		if(sockfd<0){
@@ -156,6 +162,21 @@ public:
 	    close(sockfd);
 	    return;
 	}
+	//13
+	string checkInstream(int s,int node){
+		if(isRecieved[s][node]){
+			isRecieved[s][node] = 0;
+			if(RecievedString[s][node] == ""){
+				return "anyMessage";
+			}
+			else{
+				return RecievedString[s][node];
+			}
+		}
+		else{
+			return "";
+		}
+	}
 };
 
 /**
@@ -167,6 +188,15 @@ invitation::invitation(int nodeId){
 	status = 1;
 	counter = 1;
 	this->nodeId = nodeId;
+	group.push_back(nodeId);
+	for (int i = 0; i < 20; ++i)
+	{
+		for (int j = 0; j < 1000; ++j)
+		{
+			isRecieved[i][j] = false;
+			RecievedString[i][j] = "";
+		}
+	}
 }
 
 /**
@@ -194,45 +224,44 @@ void invitation::AreYouCoordReply(int incomingId){
 
 /**
  * Asking the coordinator Periodically if it is there
+ * TODO://TRY INCORPORATING INTO WHILE LOOP OR KEEP THIS IN A INFINITE THREAD
  */
 
 void invitation::AreYouThereQues(){
-	while(true){
-		if(nodeId==leader) continue;
-		sleep(3*timeout);
+	if(nodeId==leader) return;
+	sleep(3*timeout);
+	/**
+	 * Can try keep a random number here for this eaxcution
+	 */
+	bool isThere = 0;
+	sendMessage("2",leader);
+	time_t start = time(NULL);
+	while(time(NULL)-start<timeout){
+		string s = checkInstream(3,nodeId);
+		if(s=="Yes"){
+			/**
+			 * Good!
+			 */
+			isThere = 1;
+		}
+		else if (s == "No"){
+			/**
+			 * Ignore and break from while loop
+			 */
+			break;
+		}
+	}
+	if(!isThere){
 		/**
-		 * Can try keep a random number here for this eaxcution
+		 * Oops leader is not there
+		 * Call Recovery immideately
 		 */
-		bool isThere = 0;
-		sendMessage("2",leader);
-		time_t start = time(NULL);
-		while(time(NULL)-start<timeout){
-			string s = checkInstream("3",nodeId);
-			if(s=="Yes"){
-				/**
-				 * Good!
-				 */
-				isThere = 1;
-			}
-			else if (s == "No"){
-				/**
-				 * Ignore and break from while loop
-				 */
-				break;
-			}
-		}
-		if(!isThere){
-			/**
-			 * Oops leader is not there
-			 * Call Recovery immideately
-			 */
-			Recovery();
-		}
-		else{
-			/**
-			 * All good lets continue
-			 */
-		}
+		Recovery();
+	}
+	else{
+		/**
+		 * All good lets continue
+		 */
 	}
 }
 
@@ -241,16 +270,103 @@ void invitation::AreYouThereQues(){
  */
 
 void invitation::AreYouThereAns(int incomingId){
-	if (state != 1 && leader == nodeId){
-		string s = createMessage("Yes","3");
+	string s;
+	if (status != 1 && leader == nodeId){
+		s = createMessage("Yes","3");
 	}
 	else{
-		string s = createMessage("No","3");
+		s = createMessage("No","3");
 	}
 	sendMessage(s,incomingId);
 }
 
+/**
+ * As a part of merge send message to other leaders to join me!
+ */
 
+void invitation::SendInviteMessage(int nodeId){
+	string s = createMessage("","4");
+	sendMessage(s,nodeId);
+	return;
+}
+
+/**
+ * Node send I want to join message to proposed leader
+ * here nodeId is the proposed leader
+ */
+
+void invitation::IwantToJoin(int nodeId){
+	string s = createMessage("","5");
+	sendMessage(s,nodeId);
+	time_t start = time(NULL);
+	bool isThere = 0;
+	while(time(NULL)-start<timeout){
+		string s = checkInstream(6,nodeId);
+		if(s == ""){
+			//
+		}
+		else{
+			isThere = 1;
+			break;
+		}
+	}
+	if(!isThere){
+		/**
+		 * Oops new leader is not there
+		 * Call Recovery immideately
+		 */
+		Recovery();
+	}
+	else{
+		/**
+		 * As there is reply update the new leader to be nodeId
+		 */
+		leader = nodeId;
+	}
+	return;
+}
+
+/**
+ * 
+ */
+
+void invitation::IwantToJoinReply(int nodeId){
+	/**
+	 * Check if I am still the leader or not and my status should not be DOWN
+	 */
+	if(this->nodeId != leader && status != 1) return;
+	/**
+	 * Add node to group
+	 */
+	group.push_back(nodeId);
+	string s = createMessage("","6");
+	sendMessage(s,nodeId);
+	printf("Node %d added to groupID %d of leader%d\n",nodeId,counter,leader);
+	return;
+}
+
+/**
+ * Go to initial configuration i.e. singleton leader 
+ * 
+ */
+
+void invitation::Recovery(){
+	status = 2;
+	group.clear();
+	group.push_back(nodeId);
+	leader = nodeId;
+	counter++;
+	status = 3;
+	status = 0;
+}
+
+/**
+ *
+ */
+
+void invitation::merge(int nodeId){
+
+}
 
 int main(int argc, char const *argv[])
 {
